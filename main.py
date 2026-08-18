@@ -320,6 +320,14 @@ last_game_id = load_last_game_id_from_csv()
 if last_game_id:
     print(f"[Rattrapage] Dernier gameId connu au démarrage : {last_game_id}")
 
+# Marqueur process-level : distingue un vrai démarrage (premier on_open de
+# la vie du process) d'une simple reconnexion WS après coupure réseau.
+# Le process peut se reconnecter des dizaines de fois sans jamais redémarrer ;
+# on_open est appelé à CHAQUE reconnexion, donc sans ce flag le message
+# "Bot démarré" serait renvoyé à chaque coupure réseau, pas seulement au
+# vrai (re)déploiement/redémarrage par Railway.
+_started_once = False
+
 
 def handle_new_result(number, table_id):
     t0 = time.time()
@@ -397,12 +405,21 @@ def on_close(ws, close_status_code, close_msg):
 
 
 def on_open(ws):
+    global _started_once
     print("[WS] Connexion établie.")
-    send_telegram_alert(
-        f"🎲 Bot DOZEN/COLUMN démarré (WebSocket). Capital : {engine.initial_capital} DHS, "
-        f"seuil : {engine.chaos_threshold}, paliers : {engine.bet_ladder}.\n"
-        f"Telegram : silencieux jusqu'au prochain BUST, puis relaie les 2 signaux suivants."
-    )
+
+    if not _started_once:
+        # Premier on_open de la vie du process -> vrai démarrage/redémarrage.
+        _started_once = True
+        send_telegram_alert(
+            f"🎲 Bot DOZEN/COLUMN démarré (WebSocket). Capital : {engine.initial_capital} DHS, "
+            f"seuil : {engine.chaos_threshold}, paliers : {engine.bet_ladder}.\n"
+            f"Telegram : silencieux jusqu'au prochain BUST, puis relaie les 2 signaux suivants."
+        )
+    else:
+        # Simple reconnexion WS (coupure réseau, ping timeout, etc.) au sein
+        # du même process : pas de message "démarré" sur Telegram.
+        print("[WS] Reconnexion silencieuse (pas de message Telegram).")
 
     msg1 = json.dumps({"type": "available", "casinoId": CASINO_ID})
     ws.send(msg1)
